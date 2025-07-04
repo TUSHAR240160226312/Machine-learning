@@ -1,0 +1,93 @@
+
+from IPython.display import display, Javascript, Image
+from google.colab.output import eval_js
+from base64 import b64decode
+import cv2
+import numpy as np
+import tensorflow as tf
+import matplotlib.pyplot as plt
+
+#  Assuming model and gesture_classes are already loaded from previous training
+
+# Example gesture classes (change if needed)
+gesture_classes = ['Fist', 'Open', 'Victory', 'Palm', 'ThumbsUp']
+
+# Function to open camera and take photo
+def take_photo(filename='photo.jpg', quality=0.9):
+    js = Javascript('''
+        async function takePhoto(quality) {
+            const div = document.createElement('div');
+            const capture = document.createElement('button');
+            capture.textContent = '📸 Capture';
+            div.appendChild(capture);
+
+            const video = document.createElement('video');
+            video.style.display = 'block';
+            const stream = await navigator.mediaDevices.getUserMedia({video: true});
+
+            document.body.appendChild(div);
+            div.appendChild(video);
+            video.srcObject = stream;
+            await video.play();
+
+            google.colab.output.setIframeHeight(document.documentElement.scrollHeight, true);
+            await new Promise((resolve) => capture.onclick = resolve);
+
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            stream.getTracks().forEach(track => track.stop());
+            div.remove();
+
+            return canvas.toDataURL('image/jpeg', quality);
+        }
+        takePhoto({quality: %s});
+    ''' % (quality))
+    display(js)
+    data = eval_js("takePhoto({})".format(quality))
+    binary = b64decode(data.split(',')[1])
+    with open(filename, 'wb') as f:
+        f.write(binary)
+    return filename
+
+#  Capture photo
+photo_path = take_photo()
+
+#  Load, preprocess image, and predict
+def predict_gesture(image_path):
+    img = cv2.imread(image_path)
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    img_resized = cv2.resize(img_rgb, (64, 64))
+    img_normalized = img_resized.astype('float32') / 255.0
+    img_expanded = np.expand_dims(img_normalized, axis=0)
+
+    prediction = model.predict(img_expanded)
+    predicted_class = np.argmax(prediction)
+    confidence = np.max(prediction)
+    label = gesture_classes[predicted_class]
+    return label, confidence, img_rgb, prediction[0]
+
+#  Run prediction
+label, confidence, img_display, full_prediction = predict_gesture(photo_path)
+
+#  Display captured image
+plt.figure(figsize=(5,5))
+plt.imshow(img_display)
+plt.title(f"Predicted: {label} ({confidence*100:.1f}%)")
+plt.axis('off')
+plt.show()
+
+#  Display confidence graph
+plt.figure(figsize=(8,5))
+bars = plt.bar(gesture_classes, full_prediction*100, color='skyblue')
+plt.ylim(0, 100)
+plt.ylabel("Confidence (%)")
+plt.title("Prediction Confidence for All Classes")
+
+# Highlight predicted class in green
+bars[np.argmax(full_prediction)].set_color('limegreen')
+
+for i, v in enumerate(full_prediction*100):
+    plt.text(i, v + 2, f"{v:.1f}%", ha='center', fontsize=12)
+plt.show()
